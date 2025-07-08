@@ -1,0 +1,280 @@
+# BTS Algorithmic Trading Configuration
+# Deep Learning and Graph Visibility Model Configuration
+
+# Model Architecture Configuration
+model:
+  # Architecture selection: 'baseline' for LSTM-based or 'sigformer' for SOTA
+  architecture: 'baseline'  # Options: 'baseline', 'sigformer', 'ensemble'
+  
+  # Input/Output dimensions
+  input_features: 5  # [price, volume, volatility, momentum, sentiment]
+  sequence_length: 60  # Number of time steps to look back
+  output_size: 1  # Delta hedge output
+  
+  # Baseline LSTM Model Configuration
+  baseline:
+    lstm_units: [128, 64, 32]  # Multi-layer LSTM architecture
+    dropout_rate: 0.2
+    recurrent_dropout: 0.1
+    activation: 'tanh'
+    dense_units: [64, 32]  # Dense layers after LSTM
+    
+  # SigFormer Model Configuration
+  sigformer:
+    signature_depth: 4  # Signature truncation level
+    d_model: 256  # Transformer embedding dimension
+    n_heads: 8  # Multi-head attention heads
+    n_layers: 6  # Number of transformer encoder layers
+    d_ff: 1024  # Feed-forward network dimension
+    dropout: 0.1
+    signature_features: 120  # Number of signature features
+    
+  # Ensemble Configuration
+  ensemble:
+    models: ['baseline', 'sigformer']
+    weights: [0.4, 0.6]  # Weighted ensemble
+    voting_method: 'weighted_average'
+
+# Training Configuration
+training:
+  batch_size: 64
+  epochs: 200
+  learning_rate: 0.001
+  optimizer: 'adam'
+  
+  # Learning rate schedule
+  lr_schedule:
+    type: 'cosine_annealing'  # Options: 'exponential_decay', 'cosine_annealing', 'reduce_on_plateau'
+    initial_lr: 0.001
+    final_lr: 0.0001
+    warmup_epochs: 10
+    
+  # Early stopping
+  early_stopping:
+    patience: 20
+    monitor: 'val_sharpe_ratio'
+    mode: 'max'
+    restore_best_weights: true
+    
+  # Loss function configuration
+  loss:
+    type: 'deep_hedging_loss'  # Custom loss from Deep Hedging paper
+    transaction_cost: 0.001  # 0.1% transaction cost
+    risk_aversion: 0.1
+    utility_function: 'exponential'  # Options: 'exponential', 'power', 'quadratic'
+
+# Data Configuration
+data:
+  # Data sources
+  sources:
+    price_data: 'yfinance'  # Options: 'yfinance', 'alpha_vantage', 'quandl'
+    options_data: 'cboe'
+    news_sentiment: 'alpaca_news'
+    
+  # Feature engineering
+  features:
+    technical_indicators:
+      - 'rsi'
+      - 'macd'
+      - 'bollinger_bands'
+      - 'moving_averages'
+      - 'volume_profile'
+    
+    volatility_features:
+      - 'realized_volatility'
+      - 'garch_volatility'
+      - 'vix_term_structure'
+      
+    market_microstructure:
+      - 'bid_ask_spread'
+      - 'order_flow_imbalance'
+      - 'trade_size_distribution'
+    
+  # Data preprocessing
+  preprocessing:
+    normalization: 'robust_scaler'  # Options: 'standard', 'minmax', 'robust_scaler'
+    outlier_handling: 'winsorize'  # Options: 'clip', 'winsorize', 'remove'
+    missing_values: 'forward_fill'
+    
+  # Train/validation/test split
+  split:
+    train_ratio: 0.7
+    validation_ratio: 0.15
+    test_ratio: 0.15
+    method: 'time_series_split'  # Preserve temporal order
+
+# Monte Carlo Simulation Configuration
+monte_carlo:
+  n_paths: 10000
+  n_steps: 252  # Daily steps for 1 year
+  
+  # Model types for path generation
+  models:
+    gbm:  # Geometric Brownian Motion
+      mu: 0.08  # Drift
+      sigma: 0.2  # Volatility
+      
+    heston:  # Heston Stochastic Volatility
+      kappa: 2.0  # Mean reversion speed
+      theta: 0.04  # Long-term variance
+      sigma_v: 0.3  # Volatility of variance
+      rho: -0.7  # Correlation between asset and variance
+      v0: 0.04  # Initial variance
+      
+    jump_diffusion:  # Merton Jump Diffusion
+      lambda_j: 0.1  # Jump intensity
+      mu_j: -0.05  # Jump mean
+      sigma_j: 0.15  # Jump std deviation
+
+# Backtesting Configuration
+backtesting:
+  # Walk-forward analysis
+  walk_forward:
+    window_size: 252  # Training window (days)
+    step_size: 21  # Re-training frequency (days)
+    min_train_size: 500  # Minimum training samples
+    
+  # Performance metrics
+  metrics:
+    - 'sharpe_ratio'
+    - 'sortino_ratio'
+    - 'max_drawdown'
+    - 'var_95'  # Value at Risk
+    - 'cvar_95'  # Conditional Value at Risk
+    - 'calmar_ratio'
+    - 'information_ratio'
+    
+  # Transaction costs
+  transaction_costs:
+    equity: 0.001  # 0.1% for stocks
+    options: 0.005  # 0.5% for options
+    slippage: 0.0005  # 0.05% slippage
+
+# Statistical Testing Configuration
+statistical_tests:
+  # White's Reality Check
+  whites_test:
+    n_bootstrap: 5000
+    block_length: 'auto'  # Automatic block length selection
+    
+  # Deflated Sharpe Ratio
+  deflated_sharpe:
+    n_trials: 1000
+    confidence_level: 0.95
+    
+  # Multiple testing correction
+  multiple_testing:
+    method: 'bonferroni'  # Options: 'bonferroni', 'fdr_bh', 'holm'
+    alpha: 0.05
+
+# Hyperparameter Optimization
+hyperopt:
+  method: 'optuna'  # Options: 'optuna', 'hyperopt', 'sklearn'
+  n_trials: 100
+  
+  # Search spaces for baseline model
+  baseline_space:
+    lstm_units_1: [64, 256]
+    lstm_units_2: [32, 128]
+    dropout_rate: [0.1, 0.4]
+    learning_rate: [0.0001, 0.01]
+    
+  # Search spaces for SigFormer
+  sigformer_space:
+    signature_depth: [3, 6]
+    d_model: [128, 512]
+    n_heads: [4, 16]
+    n_layers: [3, 8]
+    dropout: [0.05, 0.3]
+
+# Graph Visualization Configuration
+graph_viz:
+  # Trade execution graph
+  execution_graph:
+    layout: 'hierarchical'  # Options: 'hierarchical', 'circular', 'force_directed'
+    node_types:
+      - 'data_source'
+      - 'feature_extractor'
+      - 'model_inference'
+      - 'risk_manager'
+      - 'order_executor'
+      - 'venue'
+    
+  # Model architecture visualization
+  model_graph:
+    show_weights: false
+    show_gradients: true
+    layout: 'top_to_bottom'
+    
+  # Performance visualization
+  performance_plots:
+    equity_curve: true
+    drawdown_chart: true
+    rolling_sharpe: true
+    feature_importance: true
+
+# Logging and Monitoring
+logging:
+  level: 'INFO'  # Options: 'DEBUG', 'INFO', 'WARNING', 'ERROR'
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  
+  # File logging
+  file_logging:
+    enabled: true
+    filename: 'logs/training_{timestamp}.log'
+    max_size: '100MB'
+    backup_count: 5
+    
+  # TensorBoard logging
+  tensorboard:
+    enabled: true
+    log_dir: 'logs/tensorboard'
+    update_freq: 'epoch'
+    
+  # Weights & Biases integration
+  wandb:
+    enabled: false
+    project: 'bts-algo-trading'
+    entity: 'your-team'
+
+# Risk Management
+risk:
+  # Position limits
+  position_limits:
+    max_position_size: 0.1  # 10% of portfolio
+    max_sector_exposure: 0.3  # 30% in any sector
+    max_single_asset: 0.05  # 5% in any single asset
+    
+  # Risk metrics
+  risk_metrics:
+    var_confidence: 0.95
+    expected_shortfall: 0.95
+    max_leverage: 2.0
+    
+  # Stop loss and take profit
+  stop_loss: 0.02  # 2% stop loss
+  take_profit: 0.06  # 6% take profit
+  
+# Model Export and Deployment
+deployment:
+  # Model format
+  export_format: 'tensorflow_savedmodel'  # Options: 'tensorflow_savedmodel', 'onnx', 'pickle'
+  
+  # Model versioning
+  versioning:
+    enabled: true
+    registry: 'mlflow'  # Options: 'mlflow', 'wandb', 'local'
+    
+  # Model serving
+  serving:
+    framework: 'tensorflow_serving'
+    batch_size: 32
+    max_latency_ms: 100
+    
+# Environment Configuration
+environment:
+  random_seed: 42
+  gpu_memory_growth: true
+  mixed_precision: true  # Use mixed precision training
+  parallel_processing: true
+  n_workers: 4 
