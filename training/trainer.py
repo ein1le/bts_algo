@@ -22,7 +22,7 @@ warnings.filterwarnings('ignore')
 
 # Local imports with updated paths
 from models.model_factory import create_model, load_config
-from pipeline.data.data_loader import TradingDataLoader
+from pipeline.preprocessing.data_loader import TradingDataLoader
 from optimization.hyperopt import BayesianOptimizer
 from simulation.sim_models import MonteCarloSimulator
 

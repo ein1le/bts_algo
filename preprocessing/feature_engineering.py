@@ -19,6 +19,153 @@ warnings.filterwarnings('ignore')
 logger = logging.getLogger(__name__)
 
 
+class TechnicalIndicators:
+    """Technical indicator calculations using pandas/numpy only (no TA-Lib)."""
+    
+    @staticmethod
+    def rsi(prices: np.ndarray, period: int = 14) -> np.ndarray:
+        """Calculate Relative Strength Index (RSI) using pandas."""
+        prices = pd.Series(prices)
+        delta = prices.diff()
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
+        avg_gain = gain.rolling(window=period, min_periods=period).mean()
+        avg_loss = loss.rolling(window=period, min_periods=period).mean()
+        rs = avg_gain / (avg_loss + 1e-10)
+        rsi = 100 - (100 / (1 + rs))
+        rsi[:period] = np.nan
+        return rsi.values
+    
+    @staticmethod
+    def macd(prices: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Calculate MACD, MACD Signal, and MACD Histogram using pandas."""
+        prices = pd.Series(prices)
+        ema_fast = prices.ewm(span=fast, adjust=False).mean()
+        ema_slow = prices.ewm(span=slow, adjust=False).mean()
+        macd_line = ema_fast - ema_slow
+        macd_signal = macd_line.ewm(span=signal, adjust=False).mean()
+        macd_hist = macd_line - macd_signal
+        return macd_line.values, macd_signal.values, macd_hist.values
+    
+    @staticmethod
+    def bollinger_bands(prices: np.ndarray, period: int = 20, std_dev: float = 2.0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Calculate Bollinger Bands using pandas."""
+        prices = pd.Series(prices)
+        sma = prices.rolling(window=period, min_periods=period).mean()
+        std = prices.rolling(window=period, min_periods=period).std()
+        upper = sma + (std * std_dev)
+        lower = sma - (std * std_dev)
+        return upper.values, sma.values, lower.values
+    
+    @staticmethod
+    def moving_averages(prices: np.ndarray) -> Dict[str, np.ndarray]:
+        """Calculate various moving averages using pandas."""
+        prices = pd.Series(prices)
+        return {
+            'sma_10': prices.rolling(window=10, min_periods=10).mean().values,
+            'sma_20': prices.rolling(window=20, min_periods=20).mean().values,
+            'sma_50': prices.rolling(window=50, min_periods=50).mean().values,
+            'ema_10': prices.ewm(span=10, adjust=False).mean().values,
+            'ema_20': prices.ewm(span=20, adjust=False).mean().values,
+            'ema_50': prices.ewm(span=50, adjust=False).mean().values,
+        }
+    
+    @staticmethod
+    def volume_profile(prices: np.ndarray, volumes: np.ndarray, period: int = 20) -> Dict[str, np.ndarray]:
+        """Calculate volume-based indicators using pandas."""
+        prices = pd.Series(prices)
+        volumes = pd.Series(volumes)
+        vwap = (prices * volumes).rolling(window=period, min_periods=period).sum() / volumes.rolling(window=period, min_periods=period).sum()
+        obv = np.zeros_like(prices)
+        for i in range(1, len(prices)):
+            if prices[i] > prices[i-1]:
+                obv[i] = obv[i-1] + volumes[i]
+            elif prices[i] < prices[i-1]:
+                obv[i] = obv[i-1] - volumes[i]
+            else:
+                obv[i] = obv[i-1]
+        return {
+            'vwap': vwap.values,
+            'obv': obv,
+            'volume_sma': volumes.rolling(window=period, min_periods=period).mean().values
+        }
+
+
+class VolatilityFeatures:
+    """Volatility-based feature calculations."""
+    
+    @staticmethod
+    def realized_volatility(prices: np.ndarray, period: int = 20) -> np.ndarray:
+        """Calculate realized volatility."""
+        returns = np.diff(np.log(prices))
+        returns = np.insert(returns, 0, np.nan)  # pad with nan to match length
+        realized_vol = pd.Series(returns).rolling(window=period).std().values * np.sqrt(252)
+        return realized_vol
+    
+    @staticmethod
+    def garch_volatility(returns: np.ndarray) -> np.ndarray:
+        """Simple GARCH(1,1) volatility estimation."""
+        # returns is already padded to match length
+        valid_returns = returns.copy()
+        if len(valid_returns) == 0:
+            return np.array([])
+        variance = np.full_like(valid_returns, np.nan, dtype=np.float64)
+        # Find first non-nan
+        first_valid = np.where(~np.isnan(valid_returns))[0]
+        if len(first_valid) == 0:
+            return variance
+        start = first_valid[0]
+        variance[start] = np.nanvar(valid_returns[start:start+20]) if start+20 <= len(valid_returns) else np.nanvar(valid_returns[start:])
+        omega, alpha, beta = 0.000001, 0.1, 0.85
+        for i in range(start+1, len(valid_returns)):
+            if np.isnan(valid_returns[i-1]) or np.isnan(variance[i-1]):
+                continue
+            variance[i] = omega + alpha * valid_returns[i-1]**2 + beta * variance[i-1]
+        garch_vol = np.sqrt(variance) * np.sqrt(252)
+        return garch_vol
+    
+    @staticmethod
+    def volatility_clustering(returns: np.ndarray, period: int = 20) -> np.ndarray:
+        """Detect volatility clustering patterns."""
+        rolling_vol = pd.Series(returns).rolling(window=period, min_periods=period).std()
+        mean_rolling_vol = rolling_vol.rolling(window=period*2, min_periods=period*2).mean()
+        vol_ratio = rolling_vol / mean_rolling_vol
+        return vol_ratio.values
+
+
+class MarketMicrostructure:
+    """Market microstructure features."""
+    
+    @staticmethod
+    def bid_ask_spread(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
+        """Estimate bid-ask spread from OHLC data."""
+        # Simplified spread estimation
+        return (high - low) / close
+    
+    @staticmethod
+    def order_flow_imbalance(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
+        """Estimate order flow imbalance."""
+        price_changes = np.diff(close)
+        volume_changes = np.diff(volume)
+        imbalance = np.zeros_like(close)
+        if len(price_changes) == len(volume_changes):
+            imbalance[1:] = price_changes * volume_changes
+        else:
+            imbalance[1:] = price_changes  # fallback
+        return imbalance
+    
+    @staticmethod
+    def trade_size_distribution(volume: np.ndarray, period: int = 20) -> Dict[str, np.ndarray]:
+        """Analyze trade size distribution."""
+        volume_mean = pd.Series(volume).rolling(window=period).mean()
+        volume_std = pd.Series(volume).rolling(window=period).std()
+        
+        return {
+            'volume_zscore': ((volume - volume_mean) / volume_std).fillna(0).values,
+            'volume_percentile': pd.Series(volume).rolling(window=period).rank(pct=True).fillna(0.5).values
+        }
+
+
 class TechnicalFeatureEngine:
     """Advanced technical indicator feature engineering."""
     
@@ -357,12 +504,28 @@ class MarketMicrostructureFeatures:
         """
         features = pd.DataFrame(index=data.index)
         
-        # Bid-Ask Spread Proxy
-        features['spread_proxy'] = (data['High'] - data['Low']) / data['Close']
+        # Use the basic microstructure functions from MarketMicrostructure class
+        high_vals = data['High'].values.flatten()
+        low_vals = data['Low'].values.flatten()
+        close_vals = data['Close'].values.flatten()
+        volume_vals = data['Volume'].values.flatten()
         
-        # Price Impact
+        # Bid-Ask Spread Proxy
+        features['spread_proxy'] = MarketMicrostructure.bid_ask_spread(high_vals, low_vals, close_vals)
+        
+        # Order Flow Imbalance
+        features['order_flow'] = MarketMicrostructure.order_flow_imbalance(close_vals, volume_vals)
+        
+        # Trade Size Distribution
+        trade_dict = MarketMicrostructure.trade_size_distribution(volume_vals)
+        for name, values in trade_dict.items():
+            features[name] = values
+        
+        # Additional advanced features
         returns = data['Close'].pct_change()
         volume = data['Volume']
+        
+        # Price Impact
         features['price_impact'] = returns / np.log(1 + volume)
         
         # Amihud Illiquidity

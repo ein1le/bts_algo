@@ -23,13 +23,30 @@ logger = logging.getLogger(__name__)
 
 # Import from new structure
 from models.model_factory import create_model, load_config, validate_config, get_available_models
-from pipeline.data.data_loader import TradingDataLoader
-from pipeline.features.feature_engineering import FeatureEngineeringPipeline
-from pipeline.training.trainer import TradingModelTrainer, run_hyperparameter_optimization
+from preprocessing.data_loader import TradingDataLoader
+from preprocessing.feature_engineering import FeatureEngineeringPipeline
+from training.trainer import TradingModelTrainer, run_hyperparameter_optimization
 from optimization.hyperopt import BayesianOptimizer
 from simulation.sim_models import MonteCarloSimulator
 from simulation.sim_functions import run_comprehensive_simulation_analysis
 from visualization.graph_viz import TradingGraphVisualizer
+
+import tensorflow as tf
+
+# Enable memory growth for all GPUs
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print("Enabled memory growth for GPUs")
+    except RuntimeError as e:
+        print(e)
+
+# Enable mixed precision if desired
+from tensorflow.keras import mixed_precision
+mixed_precision.set_global_policy('mixed_float16')
+print("Enabled mixed precision")
 
 
 def setup_directories():

@@ -18,8 +18,10 @@ import logging
 from sklearn.preprocessing import RobustScaler, StandardScaler, MinMaxScaler
 from sklearn.model_selection import TimeSeriesSplit
 import yaml
-import talib
 from datetime import datetime, timedelta
+
+# Import feature engineering classes
+from preprocessing.feature_engineering import TechnicalIndicators, VolatilityFeatures, MarketMicrostructure
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -28,168 +30,6 @@ warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-class TechnicalIndicators:
-    """Technical indicator calculations using TA-Lib."""
-    
-    @staticmethod
-    def rsi(prices: np.ndarray, period: int = 14) -> np.ndarray:
-        """Calculate Relative Strength Index."""
-        try:
-            return talib.RSI(prices, timeperiod=period)
-        except:
-            # Fallback manual calculation
-            deltas = np.diff(prices)
-            seed = deltas[:period+1]
-            up = seed[seed >= 0].sum() / period
-            down = -seed[seed < 0].sum() / period
-            rs = up / down if down != 0 else 100
-            rsi = np.zeros_like(prices)
-            rsi[:period] = 100 - (100 / (1 + rs))
-            
-            for i in range(period, len(prices)):
-                delta = deltas[i-1]
-                if delta > 0:
-                    upval = delta
-                    downval = 0.0
-                else:
-                    upval = 0.0
-                    downval = -delta
-                
-                up = (up * (period - 1) + upval) / period
-                down = (down * (period - 1) + downval) / period
-                rs = up / down if down != 0 else 100
-                rsi[i] = 100 - (100 / (1 + rs))
-            
-            return rsi
-    
-    @staticmethod
-    def macd(prices: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Calculate MACD, MACD Signal, and MACD Histogram."""
-        try:
-            macd_line, macd_signal, macd_hist = talib.MACD(prices, fastperiod=fast, slowperiod=slow, signalperiod=signal)
-            return macd_line, macd_signal, macd_hist
-        except:
-            # Fallback manual calculation
-            ema_fast = pd.Series(prices).ewm(span=fast).mean().values
-            ema_slow = pd.Series(prices).ewm(span=slow).mean().values
-            macd_line = ema_fast - ema_slow
-            macd_signal = pd.Series(macd_line).ewm(span=signal).mean().values
-            macd_hist = macd_line - macd_signal
-            return macd_line, macd_signal, macd_hist
-    
-    @staticmethod
-    def bollinger_bands(prices: np.ndarray, period: int = 20, std_dev: float = 2.0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Calculate Bollinger Bands."""
-        try:
-            upper, middle, lower = talib.BBANDS(prices, timeperiod=period, nbdevup=std_dev, nbdevdn=std_dev, matype=0)
-            return upper, middle, lower
-        except:
-            # Fallback manual calculation
-            sma = pd.Series(prices).rolling(window=period).mean().values
-            std = pd.Series(prices).rolling(window=period).std().values
-            upper = sma + (std * std_dev)
-            lower = sma - (std * std_dev)
-            return upper, sma, lower
-    
-    @staticmethod
-    def moving_averages(prices: np.ndarray) -> Dict[str, np.ndarray]:
-        """Calculate various moving averages."""
-        return {
-            'sma_10': pd.Series(prices).rolling(window=10).mean().values,
-            'sma_20': pd.Series(prices).rolling(window=20).mean().values,
-            'sma_50': pd.Series(prices).rolling(window=50).mean().values,
-            'ema_10': pd.Series(prices).ewm(span=10).mean().values,
-            'ema_20': pd.Series(prices).ewm(span=20).mean().values,
-            'ema_50': pd.Series(prices).ewm(span=50).mean().values,
-        }
-    
-    @staticmethod
-    def volume_profile(prices: np.ndarray, volumes: np.ndarray, period: int = 20) -> Dict[str, np.ndarray]:
-        """Calculate volume-based indicators."""
-        # Volume-weighted average price
-        vwap = pd.Series(prices * volumes).rolling(window=period).sum() / pd.Series(volumes).rolling(window=period).sum()
-        
-        # On-balance volume
-        obv = np.zeros_like(prices)
-        for i in range(1, len(prices)):
-            if prices[i] > prices[i-1]:
-                obv[i] = obv[i-1] + volumes[i]
-            elif prices[i] < prices[i-1]:
-                obv[i] = obv[i-1] - volumes[i]
-            else:
-                obv[i] = obv[i-1]
-        
-        return {
-            'vwap': vwap.values,
-            'obv': obv,
-            'volume_sma': pd.Series(volumes).rolling(window=period).mean().values
-        }
-
-
-class VolatilityFeatures:
-    """Volatility-based feature calculations."""
-    
-    @staticmethod
-    def realized_volatility(prices: np.ndarray, period: int = 20) -> np.ndarray:
-        """Calculate realized volatility."""
-        returns = np.diff(np.log(prices))
-        return pd.Series(returns).rolling(window=period).std().values * np.sqrt(252)
-    
-    @staticmethod
-    def garch_volatility(returns: np.ndarray) -> np.ndarray:
-        """Simple GARCH(1,1) volatility estimation."""
-        # Simplified GARCH estimation
-        variance = np.zeros_like(returns)
-        variance[0] = np.var(returns)
-        
-        # Simple GARCH parameters (in practice, these would be estimated)
-        omega, alpha, beta = 0.000001, 0.1, 0.85
-        
-        for i in range(1, len(returns)):
-            variance[i] = omega + alpha * returns[i-1]**2 + beta * variance[i-1]
-        
-        return np.sqrt(variance) * np.sqrt(252)  # Annualized
-    
-    @staticmethod
-    def volatility_clustering(returns: np.ndarray, period: int = 20) -> np.ndarray:
-        """Detect volatility clustering patterns."""
-        rolling_vol = pd.Series(returns).rolling(window=period).std()
-        vol_ratio = rolling_vol / rolling_vol.rolling(window=period*2).mean()
-        return vol_ratio.fillna(1.0).values
-
-
-class MarketMicrostructure:
-    """Market microstructure features."""
-    
-    @staticmethod
-    def bid_ask_spread(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
-        """Estimate bid-ask spread from OHLC data."""
-        # Simplified spread estimation
-        return (high - low) / close
-    
-    @staticmethod
-    def order_flow_imbalance(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
-        """Estimate order flow imbalance."""
-        # Simplified calculation based on price and volume
-        price_changes = np.diff(close)
-        volume_changes = np.diff(volume)
-        
-        imbalance = np.zeros_like(close)
-        imbalance[1:] = price_changes * volume_changes[:-1] if len(volume_changes) > 0 else price_changes
-        
-        return imbalance
-    
-    @staticmethod
-    def trade_size_distribution(volume: np.ndarray, period: int = 20) -> Dict[str, np.ndarray]:
-        """Analyze trade size distribution."""
-        volume_mean = pd.Series(volume).rolling(window=period).mean()
-        volume_std = pd.Series(volume).rolling(window=period).std()
-        
-        return {
-            'volume_zscore': ((volume - volume_mean) / volume_std).fillna(0).values,
-            'volume_percentile': pd.Series(volume).rolling(window=period).rank(pct=True).fillna(0.5).values
-        }
 
 
 class DataLoader:
@@ -244,7 +84,7 @@ class DataLoader:
             DataFrame with technical indicators
         """
         features = pd.DataFrame(index=data.index)
-        close_prices = data['Close'].values
+        close_prices = data['Close'].values.flatten()
         
         # RSI
         if 'rsi' in self.data_config['features']['technical_indicators']:
@@ -273,7 +113,7 @@ class DataLoader:
         
         # Volume Profile
         if 'volume_profile' in self.data_config['features']['technical_indicators']:
-            volume_dict = TechnicalIndicators.volume_profile(close_prices, data['Volume'].values)
+            volume_dict = TechnicalIndicators.volume_profile(close_prices, data['Volume'].values.flatten())
             for name, values in volume_dict.items():
                 features[name] = values
         
@@ -290,9 +130,9 @@ class DataLoader:
             DataFrame with volatility features
         """
         features = pd.DataFrame(index=data.index)
-        close_prices = data['Close'].values
+        close_prices = data['Close'].values.flatten()
         returns = np.diff(np.log(close_prices))
-        returns = np.concatenate([[0], returns])  # Pad to match length
+        returns = np.insert(returns, 0, np.nan)  # pad with nan to match length
         
         # Realized Volatility
         if 'realized_volatility' in self.data_config['features']['volatility_features']:
@@ -322,18 +162,18 @@ class DataLoader:
         # Bid-Ask Spread Proxy
         if 'bid_ask_spread' in self.data_config['features']['market_microstructure']:
             features['spread_proxy'] = MarketMicrostructure.bid_ask_spread(
-                data['High'].values, data['Low'].values, data['Close'].values
+                data['High'].values.flatten(), data['Low'].values.flatten(), data['Close'].values.flatten()
             )
         
         # Order Flow Imbalance
         if 'order_flow_imbalance' in self.data_config['features']['market_microstructure']:
             features['order_flow'] = MarketMicrostructure.order_flow_imbalance(
-                data['Close'].values, data['Volume'].values
+                data['Close'].values.flatten(), data['Volume'].values.flatten()
             )
         
         # Trade Size Distribution
         if 'trade_size_distribution' in self.data_config['features']['market_microstructure']:
-            trade_dict = MarketMicrostructure.trade_size_distribution(data['Volume'].values)
+            trade_dict = MarketMicrostructure.trade_size_distribution(data['Volume'].values.flatten())
             for name, values in trade_dict.items():
                 features[name] = values
         
@@ -514,7 +354,7 @@ class DataLoader:
         }
 
 
-def load_config(config_path: str = 'python/config.yaml') -> Dict:
+def load_config(config_path: str = 'config/config.yaml') -> Dict:
     """Load configuration from YAML file."""
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
@@ -522,7 +362,13 @@ def load_config(config_path: str = 'python/config.yaml') -> Dict:
 
 
 if __name__ == "__main__":
-    # Example usage
+    # Import visualization module
+    import sys
+    import os
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+    from visualization.dataloader_viz import DataLoaderVisualizer, quick_data_validation, validate_preprocessing_pipeline
+    
+    # Example usage with visualization
     config = load_config()
     data_loader = DataLoader(config)
     
@@ -531,8 +377,119 @@ if __name__ == "__main__":
     start_date = (datetime.now() - timedelta(days=365*2)).strftime('%Y-%m-%d')
     
     try:
+        print("Loading and preparing data...")
         data_dict = data_loader.load_and_prepare_data('AAPL', start_date, end_date)
         print(f"Data loaded successfully. Training samples: {len(data_dict['X_train'])}")
         print(f"Feature names: {data_dict['feature_names'][:10]}...")  # Show first 10 features
+        
+        # Create visualization directory
+        viz_dir = 'visualization_output'
+        os.makedirs(viz_dir, exist_ok=True)
+        
+        # Initialize visualizer
+        viz = DataLoaderVisualizer()
+        
+        print("\n=== Running Data Validation Visualizations ===")
+        
+        # 1. Raw data validation
+        print("1. Plotting raw market data...")
+        viz.plot_raw_data(
+            data_dict['raw_data'], 
+            title="AAPL Raw Market Data"
+        )
+        
+        # 2. Technical indicators validation
+        print("2. Plotting technical indicators...")
+        # Compute indicators separately for visualization
+        tech_indicators = data_loader.compute_technical_indicators(data_dict['raw_data'])
+        indicators_dict = {col: tech_indicators[col] for col in tech_indicators.columns}
+        
+        viz.plot_technical_indicators(
+            data_dict['raw_data'],
+            indicators_dict,
+            title="AAPL Technical Indicators"
+        )
+        
+        # 3. Feature engineering validation
+        print("3. Plotting engineered features...")
+        viz.plot_feature_engineering(
+            data_dict['raw_data'],
+            data_dict['features'],
+            title="AAPL Feature Engineering"
+        )
+        
+        # 4. Data normalization validation
+        print("4. Plotting normalization validation...")
+        # Create normalized DataFrame for comparison
+        normalized_df = pd.DataFrame(
+            data_loader.scaler.transform(data_dict['features'].values),
+            columns=data_dict['features'].columns,
+            index=data_dict['features'].index
+        )
+        
+        viz.plot_data_normalization(
+            data_dict['features'],
+            normalized_df,
+            title="AAPL Data Normalization"
+        )
+        
+        # 5. Sequence generation validation
+        print("5. Plotting sequence generation...")
+        viz.plot_sequence_generation(
+            data_dict['X_train'],
+            data_dict['y_train'],
+            sequence_length=config['model']['sequence_length'],
+            title="AAPL Sequence Generation"
+        )
+        
+        # 6. Correlation matrix
+        print("6. Plotting correlation matrix...")
+        viz.plot_correlation_matrix(
+            data_dict['features'],
+            title="AAPL Feature Correlation Matrix"
+        )
+        
+        # 7. Data quality report
+        print("7. Generating data quality report...")
+        viz.plot_data_quality_report(
+            data_dict['features'],
+            title="AAPL Data Quality Report"
+        )
+        
+        # 8. Interactive dashboard (optional - requires plotly)
+        print("8. Creating interactive dashboard...")
+        try:
+            interactive_fig = viz.create_interactive_dashboard(
+                data_dict['raw_data'],
+                indicators_dict,
+                title="AAPL Interactive Dashboard"
+            )
+            interactive_fig.show()
+            print("Interactive dashboard displayed")
+        except Exception as e:
+            print(f"Could not create interactive dashboard: {e}")
+        
+        # Quick validation function
+        print("\n=== Running Quick Validation ===")
+        quick_data_validation(
+            data_dict['raw_data'],
+            indicators_dict
+        )
+        
+        # Comprehensive pipeline validation
+        print("\n=== Running Comprehensive Pipeline Validation ===")
+        validate_preprocessing_pipeline(
+            data_dict['raw_data'],
+            data_dict['features'],
+            data_dict['X_train'],
+            data_dict['y_train']
+        )
+        
+        print(f"\n=== Visualization Complete ===")
+        print(f"All plots saved to: {viz_dir}/")
+        print("Check the generated plots to validate your preprocessing pipeline!")
+        
     except Exception as e:
-        logger.error(f"Error loading data: {e}") 
+        logger.error(f"Error loading data: {e}")
+        import traceback
+        traceback.print_exc() 
